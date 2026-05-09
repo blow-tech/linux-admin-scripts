@@ -1,0 +1,85 @@
+#!/bin/bash
+# ===========================================================
+# Script Name : cpu_memory_monitor.sh
+# Purpose     : Monitor CPU and Memory — alert via Slack/Email
+# Usage       : ./cpu_memory_monitor.sh
+#               Recommended cron: */5 * * * *
+# Author      : blow_tech
+# Version     : 2.0
+# ===========================================================
+set -euo pipefail
+
+SCRIPT_NAME="cpu_memory_monitor"
+LOG_FILE="/var/log/admin-scripts/${SCRIPT_NAME}.log"
+
+# =================== CONFIGURATION =========================
+CPU_THRESHOLD=80        # Alert if CPU  exceeds this %
+MEM_THRESHOLD=80        # Alert if Memory exceeds this %
+# ===========================================================
+
+# Load shared alert engine
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../core/alert_engine.sh
+source "$SCRIPT_DIR/../core/alert_engine.sh"
+
+# Prevent concurrent runs
+lock_script "$SCRIPT_NAME"
+
+# Rotate log if over 5MB
+mkdir -p "$(dirname "$LOG_FILE")"
+rotate_log "$LOG_FILE" 5120
+
+HOST=$(hostname)
+DATE=$(date +"%Y-%m-%d %H:%M:%S")
+
+log() { echo "[$DATE] $*" | tee -a "$LOG_FILE"; }
+
+log "--- CPU/Memory check started on $HOST ---"
+
+# ----------------------------------------------------------
+# CPU — use vmstat for cross-distro consistency
+# vmstat 1 2 : 2 samples, 1 second apart; take the last line
+# Column 15 = idle %
+# ----------------------------------------------------------
+IDLE=$(vmstat 1 2 | tail -1 | awk '{print $15}')
+CPU_USAGE=$((100 - IDLE))
+
+# ----------------------------------------------------------
+# Memory — use /proc/meminfo for accuracy (free -m can vary)
+# ----------------------------------------------------------
+MEM_TOTAL=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+MEM_AVAIL=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+MEM_USED=$((MEM_TOTAL - MEM_AVAIL))
+MEM_USAGE=$(awk "BEGIN {printf \"%.1f\", ($MEM_USED/$MEM_TOTAL)*100}")
+MEM_USED_MB=$((MEM_USED / 1024))
+MEM_TOTAL_MB=$((MEM_TOTAL / 1024))
+
+# ----------------------------------------------------------
+# CPU Alert
+# ----------------------------------------------------------
+if [ "$CPU_USAGE" -ge "$CPU_THRESHOLD" ]; then
+    MSG="CPU usage is at ${CPU_USAGE}% on $HOST (threshold: ${CPU_THRESHOLD}%)"
+    log "🔴 CRITICAL: $MSG"
+
+    # Top 3 CPU-hungry processes for context
+    TOP_PROCS=$(ps -eo comm,%cpu --sort=-%cpu | head -4 | tail -3 | awk '{printf "%s (%s%%)\n", $1, $2}' | tr '\n' ' ')
+    alert_critical "$SCRIPT_NAME" "High CPU Usage — $HOST" "$MSG\nTop processes: $TOP_PROCS"
+else
+    log "✅ CPU usage normal: ${CPU_USAGE}% (threshold: ${CPU_THRESHOLD}%)"
+fi
+
+# ----------------------------------------------------------
+# Memory Alert
+# ----------------------------------------------------------
+MEM_INT=${MEM_USAGE%.*}
+if [ "$MEM_INT" -ge "$MEM_THRESHOLD" ]; then
+    MSG="Memory usage is at ${MEM_USAGE}% (${MEM_USED_MB}MB / ${MEM_TOTAL_MB}MB) on $HOST"
+    log "🔴 CRITICAL: $MSG"
+
+    TOP_MEM=$(ps -eo comm,%mem --sort=-%mem | head -4 | tail -3 | awk '{printf "%s (%s%%)\n", $1, $2}' | tr '\n' ' ')
+    alert_critical "$SCRIPT_NAME" "High Memory Usage — $HOST" "$MSG\nTop processes: $TOP_MEM"
+else
+    log "✅ Memory usage normal: ${MEM_USAGE}% — ${MEM_USED_MB}MB / ${MEM_TOTAL_MB}MB"
+fi
+
+log "--- CPU/Memory check completed ---"
