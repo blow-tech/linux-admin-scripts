@@ -1,0 +1,85 @@
+#!/bin/bash
+# ===========================================================
+# Script Name : disk_alert.sh
+# Purpose     : Monitor disk usage on all mountpoints
+#               Alert via Slack/Email when threshold exceeded
+# Usage       : ./disk_alert.sh
+#               Recommended cron: */30 * * * *
+# Author      : blow_tech
+# Version     : 2.0
+# ===========================================================
+set -euo pipefail
+
+SCRIPT_NAME="disk_alert"
+LOG_FILE="/var/log/admin-scripts/${SCRIPT_NAME}.log"
+
+# =================== CONFIGURATION =========================
+WARNING_THRESHOLD=75    # % — send WARNING alert
+CRITICAL_THRESHOLD=90   # % — send CRITICAL alert
+
+# Mountpoints to skip (space-separated)
+EXCLUDE_FS="tmpfs devtmpfs udev squashfs overlay"
+# ===========================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../core/alert_engine.sh"
+
+lock_script "$SCRIPT_NAME"
+
+mkdir -p "$(dirname "$LOG_FILE")"
+rotate_log "$LOG_FILE" 5120
+
+HOST=$(hostname)
+DATE=$(date +"%Y-%m-%d %H:%M:%S")
+ALERT_TRIGGERED=false
+
+log() { echo "[$DATE] $*" | tee -a "$LOG_FILE"; }
+
+log "--- Disk usage check started on $HOST ---"
+
+# Build exclusion pattern
+EXCLUDE_PATTERN=$(echo "$EXCLUDE_FS" | tr ' ' '|')
+
+while IFS= read -r line; do
+    # Parse df output columns
+    FS=$(echo "$line"      | awk '{print $1}')
+    SIZE=$(echo "$line"    | awk '{print $2}')
+    USED=$(echo "$line"    | awk '{print $3}')
+    AVAIL=$(echo "$line"   | awk '{print $4}')
+    USEP=$(echo "$line"    | awk '{print $5}' | tr -d '%')
+    MOUNT=$(echo "$line"   | awk '{print $6}')
+
+    # Skip excluded filesystem types
+    FS_TYPE=$(findmnt -n -o FSTYPE "$MOUNT" 2>/dev/null || echo "unknown")
+    if echo "$FS_TYPE" | grep -qE "^($EXCLUDE_PATTERN)$"; then
+        continue
+    fi
+
+    # Skip if usage is not a number
+    if ! [[ "$USEP" =~ ^[0-9]+$ ]]; then
+        continue
+    fi
+
+    if [ "$USEP" -ge "$CRITICAL_THRESHOLD" ]; then
+        MSG="CRITICAL: $MOUNT on $HOST is ${USEP}% full (Used: $USED / $SIZE, Available: $AVAIL)"
+        log "🔴 $MSG"
+        alert_critical "$SCRIPT_NAME" "Disk Critical — $MOUNT on $HOST" "$MSG"
+        ALERT_TRIGGERED=true
+
+    elif [ "$USEP" -ge "$WARNING_THRESHOLD" ]; then
+        MSG="WARNING: $MOUNT on $HOST is ${USEP}% full (Used: $USED / $SIZE, Available: $AVAIL)"
+        log "🟡 $MSG"
+        alert_warning "$SCRIPT_NAME" "Disk Warning — $MOUNT on $HOST" "$MSG"
+        ALERT_TRIGGERED=true
+
+    else
+        log "✅ $MOUNT — ${USEP}% used (${AVAIL} free)"
+    fi
+
+done < <(df -BM | awk 'NR>1')
+
+if [ "$ALERT_TRIGGERED" = false ]; then
+    log "✅ All disk partitions within normal range."
+fi
+
+log "--- Disk usage check completed ---"
