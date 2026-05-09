@@ -1,0 +1,83 @@
+#!/bin/bash
+# ===========================================================
+# Script Name : service_uptime_checker.sh
+# Purpose     : Check critical services — restart if down,
+#               escalate alert if restart fails
+# Usage       : ./service_uptime_checker.sh
+#               Recommended cron: */5 * * * *
+# Author      : blow_tech
+# Version     : 2.0
+# ===========================================================
+set -euo pipefail
+
+SCRIPT_NAME="service_uptime_checker"
+LOG_FILE="/var/log/admin-scripts/${SCRIPT_NAME}.log"
+
+# =================== CONFIGURATION =========================
+SERVICES=("nginx" "docker" "mysql")   # Services to monitor
+MAX_RESTART_ATTEMPTS=2                  # How many times to retry before escalating
+RESTART_WAIT=5                          # Seconds to wait between restart attempts
+# ===========================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../core/alert_engine.sh"
+
+lock_script "$SCRIPT_NAME"
+
+mkdir -p "$(dirname "$LOG_FILE")"
+rotate_log "$LOG_FILE" 5120
+
+HOST=$(hostname)
+DATE=$(date +"%Y-%m-%d %H:%M:%S")
+FAIL_COUNT=0
+
+log() { echo "[$DATE] $*" | tee -a "$LOG_FILE"; }
+
+log "--- Service check started on $HOST ---"
+
+for service in "${SERVICES[@]}"; do
+
+    # Check if service exists on this system
+    if ! systemctl list-units --full --all 2>/dev/null | grep -q "^${service}.service"; then
+        log "⏭️  $service — not installed on this system, skipping."
+        continue
+    fi
+
+    if systemctl is-active --quiet "$service"; then
+        log "✅ $service is running."
+    else
+        log "⚠️  $service is DOWN — attempting restart..."
+        alert_warning "$SCRIPT_NAME" "Service Down — $service on $HOST" \
+            "$service is not running on $HOST. Attempting automatic restart."
+
+        SUCCESS=false
+        for attempt in $(seq 1 "$MAX_RESTART_ATTEMPTS"); do
+            log "   Restart attempt $attempt / $MAX_RESTART_ATTEMPTS ..."
+            systemctl restart "$service" 2>>"$LOG_FILE" || true
+            sleep "$RESTART_WAIT"
+
+            if systemctl is-active --quiet "$service"; then
+                log "✅ $service restarted successfully on attempt $attempt."
+                alert_info "$SCRIPT_NAME" "Service Recovered — $service on $HOST" \
+                    "$service was down but has been restarted successfully on attempt $attempt."
+                SUCCESS=true
+                break
+            fi
+        done
+
+        if [ "$SUCCESS" = false ]; then
+            log "🔴 CRITICAL: $service failed to restart after $MAX_RESTART_ATTEMPTS attempts! Manual intervention required."
+            alert_critical "$SCRIPT_NAME" "Service FAILED — $service on $HOST" \
+                "$service could not be restarted after $MAX_RESTART_ATTEMPTS attempts on $HOST. MANUAL INTERVENTION REQUIRED.\n\nLast journal entries:\n$(journalctl -u "$service" -n 10 --no-pager 2>/dev/null || echo 'Unable to fetch journal')"
+            (( FAIL_COUNT++ )) || true
+        fi
+    fi
+done
+
+if [ "$FAIL_COUNT" -gt 0 ]; then
+    log "--- Service check completed with $FAIL_COUNT failure(s) ---"
+    exit 1
+else
+    log "--- Service check completed — all services healthy ---"
+    exit 0
+fi
