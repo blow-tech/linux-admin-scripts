@@ -1,0 +1,99 @@
+#!/bin/bash
+# ===========================================================
+# Script Name : backup_script.sh
+# Purpose     : Compressed backup with verification + alerts
+# Usage       : ./backup_script.sh [source_dir] [backup_dir]
+#               Defaults to Documents → Backups if no args given
+# Author      : blow_tech
+# Version     : 2.0
+# ===========================================================
+set -euo pipefail
+
+SCRIPT_NAME="backup_script"
+LOG_FILE="/var/log/admin-scripts/${SCRIPT_NAME}.log"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../core/alert_engine.sh"
+
+lock_script "$SCRIPT_NAME"
+
+mkdir -p "$(dirname "$LOG_FILE")"
+rotate_log "$LOG_FILE" 5120
+
+# =================== CONFIGURATION =========================
+SOURCE_DIR="${1:-/home/$USER/Documents}"
+BACKUP_DIR="${2:-/home/$USER/Backups}"
+KEEP_DAYS=7           # Auto-delete backups older than N days
+MIN_FREE_MB=200        # Abort if disk has less than this free
+# ===========================================================
+
+TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+BACKUP_FILE="$BACKUP_DIR/backup_${TIMESTAMP}.tar.gz"
+DATE=$(date +"%Y-%m-%d %H:%M:%S")
+HOST=$(hostname)
+
+log() { echo "[$DATE] $*" | tee -a "$LOG_FILE"; }
+
+log "=== Backup started: $SOURCE_DIR → $BACKUP_DIR ==="
+
+# ----------------------------------------------------------
+# Validate source
+# ----------------------------------------------------------
+if [ ! -e "$SOURCE_DIR" ]; then
+    MSG="Source path does not exist: $SOURCE_DIR on $HOST"
+    log "❌ ABORT: $MSG"
+    alert_critical "$SCRIPT_NAME" "Backup Aborted" "$MSG"
+    exit 1
+fi
+
+# ----------------------------------------------------------
+# Ensure backup directory exists and has space
+# ----------------------------------------------------------
+mkdir -p "$BACKUP_DIR"
+
+FREE_MB=$(df -BM "$BACKUP_DIR" | awk 'NR==2 {gsub(/M/,"",$4); print $4}')
+if [ "$FREE_MB" -lt "$MIN_FREE_MB" ]; then
+    MSG="Insufficient disk space: only ${FREE_MB}MB free in $BACKUP_DIR (need ${MIN_FREE_MB}MB) on $HOST"
+    log "❌ ABORT: $MSG"
+    alert_critical "$SCRIPT_NAME" "Backup Aborted — Low Disk Space" "$MSG"
+    exit 1
+fi
+
+# ----------------------------------------------------------
+# Create the backup
+# ----------------------------------------------------------
+log "📦 Creating backup: $BACKUP_FILE ..."
+if tar -czf "$BACKUP_FILE" "$SOURCE_DIR" 2>>"$LOG_FILE"; then
+    SIZE=$(du -sh "$BACKUP_FILE" | cut -f1)
+    log "✅ Backup successful — $BACKUP_FILE ($SIZE)"
+    alert_info "$SCRIPT_NAME" "Backup Success — $HOST" \
+        "Backup of $SOURCE_DIR completed.\nFile: $BACKUP_FILE\nSize: $SIZE"
+else
+    MSG="tar failed: $SOURCE_DIR → $BACKUP_FILE on $HOST"
+    log "❌ FAILED: $MSG"
+    # Clean up partial file
+    rm -f "$BACKUP_FILE"
+    alert_critical "$SCRIPT_NAME" "Backup FAILED — $HOST" "$MSG"
+    exit 1
+fi
+
+# ----------------------------------------------------------
+# Verify the archive is not corrupt
+# ----------------------------------------------------------
+log "🔍 Verifying archive integrity ..."
+if tar -tzf "$BACKUP_FILE" > /dev/null 2>&1; then
+    log "✅ Archive integrity OK."
+else
+    MSG="Archive verification FAILED for $BACKUP_FILE on $HOST — file may be corrupt!"
+    log "❌ $MSG"
+    alert_critical "$SCRIPT_NAME" "Backup Corrupt — $HOST" "$MSG"
+    exit 1
+fi
+
+# ----------------------------------------------------------
+# Rotate old backups
+# ----------------------------------------------------------
+DELETED=$(find "$BACKUP_DIR" -type f -mtime +"$KEEP_DAYS" -name "*.tar.gz" \
+          -print -delete 2>>"$LOG_FILE" | wc -l)
+log "🧹 Cleaned $DELETED backup(s) older than $KEEP_DAYS days."
+log "=== Backup process completed ==="
