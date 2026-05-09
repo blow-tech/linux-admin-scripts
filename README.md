@@ -26,7 +26,6 @@ cd linux-admin-scripts
 
 Make a script executable:
 
-
 chmod +x scripts/monitoring/server-stats.sh
 
 Run a script:
@@ -51,3 +50,6 @@ Linux server or workstation
 Bash
 Standard Linux command-line tools
 sudo/root permissions may be required for some audit checks
+Disclaimer
+
+Audit outputs may contain sensitive information such as usernames, IP addresses, installed packages, services, and system configuration. Review reports before sharing them.
