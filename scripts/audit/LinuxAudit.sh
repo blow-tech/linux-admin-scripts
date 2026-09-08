@@ -2,7 +2,7 @@
 # LinuxAudit - Targeted Security Audit Tool
 # Interactive menu: run only what you need
 
-tput clear
+tput clear 2>/dev/null || true
 
 ctrl_c() {
   echo ""
@@ -11,6 +11,10 @@ ctrl_c() {
 }
 trap ctrl_c INT
 
+umask 077
+if [[ ${ENABLE_FILESYSTEM_SCAN:-0} == 1 ]]; then
+  [[ ${AUDIT_SCAN_ROOT:-} == /* && -d ${AUDIT_SCAN_ROOT:-} ]] || { echo "Invalid AUDIT_SCAN_ROOT" >&2; exit 2; }
+fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="$SCRIPT_DIR/LinuxAudit_$(hostname)_$(date +%Y%m%d_%H%M%S).txt"
 
@@ -186,7 +190,11 @@ audit_disk_memory() {
   sep
 
   hdr "Largest Directories Under / (top 20, skipping pseudo-fs)"
-  du -x --max-depth=3 / 2>/dev/null | sort -rh | head -20; echo
+  if [[ ${ENABLE_FILESYSTEM_SCAN:-0} == 1 ]]; then
+    timeout 60 du -x --max-depth=3 "${AUDIT_SCAN_ROOT:?Set an approved absolute scan directory}" | sort -rn | head -20
+  else
+    echo "Skipped: set ENABLE_FILESYSTEM_SCAN=1 and AUDIT_SCAN_ROOT after approving metadata I/O."
+  fi
   sep
 }
 
@@ -303,12 +311,16 @@ audit_security() {
   sep
 
   hdr "World-Writable Files"
-  find / -xdev -type f -perm -0002 2>/dev/null | head -50
+  if [[ ${ENABLE_FILESYSTEM_SCAN:-0} == 1 ]]; then
+    timeout 60 find "${AUDIT_SCAN_ROOT:?Set approved scan root}" -xdev -type f -perm -0002 | head -50
+  else echo "Filesystem scan skipped."; fi
   echo
   sep
 
   hdr "SUID / SGID Binaries"
-  find / -xdev \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null
+  if [[ ${ENABLE_FILESYSTEM_SCAN:-0} == 1 ]]; then
+    timeout 60 find "${AUDIT_SCAN_ROOT:?Set approved scan root}" -xdev \( -perm -4000 -o -perm -2000 \) -type f
+  else echo "Filesystem scan skipped."; fi
   echo
   sep
 
