@@ -64,6 +64,29 @@ class SafetyTests(unittest.TestCase):
             result=self.run_script('monitoring/service_uptime','nginx')
             self.assertEqual(result.returncode,expected,result.stderr)
         self.assertNotEqual(self.run_script('monitoring/service_uptime').returncode,0)
+    def test_checksum_collision_never_overwrites_evidence(self):
+        src,dest=self.backup_fixture()
+        for kind in ['file','symlink','directory']:
+            target=dest/(kind+'.tar.gz'); sidecar=Path(str(target)+'.sha256')
+            evidence=dest/(kind+'-evidence'); evidence.write_text('retain')
+            if kind=='file': sidecar.write_text('retain')
+            elif kind=='symlink': sidecar.symlink_to(evidence)
+            else: sidecar.mkdir()
+            env=dict(self.env,SOURCE_DIR=str(src),TARGET=str(target),ENGINE=str(ROOT/'scripts/core/backup_engine.sh'))
+            result=subprocess.run(['bash','-c','source "$ENGINE"; create_verified_archive "$TARGET"'],env=env,capture_output=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertFalse(target.exists())
+            self.assertEqual(evidence.read_text(),'retain')
+            if kind!='directory': self.assertEqual(sidecar.read_text(),'retain')
+    def test_checksum_failure_is_not_a_verified_backup(self):
+        src,dest=self.backup_fixture(); target=dest/'failed.tar.gz'
+        self.mock('sha256sum','exit 1')
+        env=dict(self.env,SOURCE_DIR=str(src),TARGET=str(target),ENGINE=str(ROOT/'scripts/core/backup_engine.sh'))
+        result=subprocess.run(['bash','-c','source "$ENGINE"; create_verified_archive "$TARGET"'],env=env,capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertFalse(Path(str(target)+'.sha256').exists())
+        self.assertNotIn('Verified archive:',result.stdout)
+        self.assertTrue(list(dest.glob('*.partial.*')))
     def test_disk_preserves_mount_spaces_and_query_failure(self):
         self.mock('df',"printf 'Type 1M-blocks Used Avail Use%% Mounted on\\next4 100M 80M 20M 80%% /data with spaces\\n'")
         result=self.run_script('monitoring/disk_alert'); self.assertEqual(result.returncode,1)

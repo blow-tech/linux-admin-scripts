@@ -21,11 +21,7 @@ if [[ $(date -u +%u) == 7 ]]; then
     PARTIAL=$(mktemp "${WEEKLY_FILE}.partial.XXXXXX")
     cp -- "$BACKUP_FILE" "$PARTIAL"
     cmp -- "$BACKUP_FILE" "$PARTIAL"
-    gzip -t -- "$PARTIAL"
-    tar -tzf "$PARTIAL" >/dev/null
-    ln -- "$PARTIAL" "$WEEKLY_FILE"
-    rm -- "$PARTIAL"
-    sha256sum -- "$WEEKLY_FILE" > "${WEEKLY_FILE}.sha256"
+    publish_verified_archive "$PARTIAL" "$WEEKLY_FILE"
 fi
 alert_info backup_rotation 'Backup verified' "$BACKUP_FILE"
 preview_retention "$BACKUP_DIR/daily" "admin-daily-${JOB_ID}-*.tar.gz" "${DAILY_KEEP:-7}"

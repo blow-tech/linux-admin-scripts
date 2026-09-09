@@ -20,18 +20,29 @@ backup_preflight() {
     [[ $needed =~ ^[0-9]+$ && $available =~ ^[0-9]+$ ]] || return 1
     (( available > needed + needed / 10 + 524288000 )) || { echo 'Insufficient backup headroom' >&2; return 1; }
 }
+publish_verified_archive() {
+    local partial=$1 target=$2 checksum
+    [[ ! -e $target && ! -L $target && ! -e ${target}.sha256 && ! -L ${target}.sha256 ]] || {
+        echo 'Refusing existing archive or checksum' >&2; return 1;
+    }
+    gzip -t -- "$partial" && tar -tzf "$partial" >/dev/null || return 1
+    checksum=$(mktemp "${target}.sha256.partial.XXXXXX") || return 1
+    # Hash through the final pathname only after no-clobber archive publication.
+    ln -T -- "$partial" "$target" || return 1
+    sha256sum -- "$target" > "$checksum" || return 1
+    ln -T -- "$checksum" "${target}.sha256" || return 1
+    rm -- "$partial" "$checksum" || return 1
+}
 create_verified_archive() {
     local target=$1 partial
-    [[ ! -e $target && ! -L $target ]] || { echo 'Refusing existing archive' >&2; return 1; }
+    [[ ! -e $target && ! -L $target && ! -e ${target}.sha256 && ! -L ${target}.sha256 ]] || {
+        echo 'Refusing existing archive or checksum' >&2; return 1;
+    }
     partial=$(mktemp "${target}.partial.XXXXXX") || return 1
     if ! tar -czf "$partial" -C "$(dirname -- "$SOURCE_DIR")" -- "$(basename -- "$SOURCE_DIR")"; then
         echo "Backup failed; incomplete artifact retained: $partial" >&2; return 1
     fi
-    gzip -t -- "$partial" && tar -tzf "$partial" >/dev/null || return 1
-    # Atomic publication on the same filesystem without overwriting any prior archive.
-    ln -- "$partial" "$target" || return 1
-    rm -- "$partial" || return 1
-    sha256sum -- "$target" > "${target}.sha256" || return 1
+    publish_verified_archive "$partial" "$target" || return 1
     printf 'Verified archive: %s (restore test still required)\n' "$target"
 }
 preview_retention() {

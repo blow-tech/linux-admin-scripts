@@ -1,5 +1,7 @@
 # Linux Admin Scripts
 
+9 September continuation: shared backup publication now refuses existing checksum files, symlinks and directories. Both daily and weekly paths publish checksums with no-clobber hard links; a checksum-generation failure cannot report a verified backup. Interrupted publication may still leave an archive without its final checksum, so require a valid checksum pair and investigate retained partial artifacts. This adds two isolated regression tests (12 total); application-consistent restoration remains a lab gate.
+
 Bash administration utilities. Validate each script in a disposable lab before production deployment. Syntax checks and fixture tests do not certify an environment or an application backup.
 
 ## Entry points
