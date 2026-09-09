@@ -8,6 +8,7 @@
 # Version     : 2.0
 # ===========================================================
 set -euo pipefail
+umask 077
 
 SCRIPT_NAME="cpu_memory_monitor"
 LOG_FILE="/var/log/admin-scripts/${SCRIPT_NAME}.log"
@@ -62,7 +63,7 @@ if [ "$CPU_USAGE" -ge "$CPU_THRESHOLD" ]; then
     log "🔴 CRITICAL: $MSG"
 
     # Top 3 CPU-hungry processes for context
-    TOP_PROCS=$(ps -eo comm,%cpu --sort=-%cpu | head -4 | tail -3 | awk '{printf "%s (%s%%)\n", $1, $2}' | tr '\n' ' ')
+    TOP_PROCS=$(ps -eo comm,%cpu --sort=-%cpu | awk 'NR>=2 && NR<=4' | awk '{printf "%s (%s%%)\n", $1, $2}' | tr '\n' ' ')
     alert_critical "$SCRIPT_NAME" "High CPU Usage — $HOST" "$MSG\nTop processes: $TOP_PROCS"
 else
     log "✅ CPU usage normal: ${CPU_USAGE}% (threshold: ${CPU_THRESHOLD}%)"
@@ -76,7 +77,7 @@ if [ "$MEM_INT" -ge "$MEM_THRESHOLD" ]; then
     MSG="Memory usage is at ${MEM_USAGE}% (${MEM_USED_MB}MB / ${MEM_TOTAL_MB}MB) on $HOST"
     log "🔴 CRITICAL: $MSG"
 
-    TOP_MEM=$(ps -eo comm,%mem --sort=-%mem | head -4 | tail -3 | awk '{printf "%s (%s%%)\n", $1, $2}' | tr '\n' ' ')
+    TOP_MEM=$(ps -eo comm,%mem --sort=-%mem | awk 'NR>=2 && NR<=4' | awk '{printf "%s (%s%%)\n", $1, $2}' | tr '\n' ' ')
     alert_critical "$SCRIPT_NAME" "High Memory Usage — $HOST" "$MSG\nTop processes: $TOP_MEM"
 else
     log "✅ Memory usage normal: ${MEM_USAGE}% — ${MEM_USED_MB}MB / ${MEM_TOTAL_MB}MB"

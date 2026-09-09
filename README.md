@@ -1,189 +1,58 @@
-# 🐧 Linux Admin Scripts
+# Linux Admin Scripts
 
-A production-ready collection of Bash scripts for Linux system administration — monitoring, alerting, backup, maintenance, and security auditing.
+9 September continuation: shared backup publication now refuses existing checksum files, symlinks and directories. Both daily and weekly paths publish checksums with no-clobber hard links; a checksum-generation failure cannot report a verified backup. Interrupted publication may still leave an archive without its final checksum, so require a valid checksum pair and investigate retained partial artifacts. This adds two isolated regression tests (12 total); application-consistent restoration remains a lab gate.
 
-> All scripts include centralized Slack/Teams/Email alerting, lock files, log rotation, and proper error handling.
+Bash administration utilities. Validate each script in a disposable lab before production deployment. Syntax checks and fixture tests do not certify an environment or an application backup.
 
----
+## Entry points
 
-## 📁 Repository Structure
+Use `bash <script-path>`; several maintained entry points intentionally have no `.sh` extension.
 
-```
-linux-admin-scripts/
-└── scripts/
-    ├── core/               ← Shared alert engine (load this first)
-    ├── audit/              ← Security & system auditing
-    ├── monitoring/         ← Resource & service monitoring
-    ├── backup/             ← Backup & rotation scripts
-    └── maintenance/        ← Cleanup & housekeeping
-```
+| Path | Behavior and scope |
+| --- | --- |
+| `scripts/monitoring/server-stats.sh` | Local statistics snapshot; unchanged in the September remediation. |
+| `scripts/monitoring/cpu_memory_monitor` | CPU/memory observations; local log and stderr alerts. |
+| `scripts/monitoring/disk_alert` | One GNU df collection; warning/critical or unavailable collection returns nonzero. |
+| `scripts/monitoring/service_uptime <unit> ...` | Explicit service scope, alert-only; never restarts a service. |
+| `scripts/backup/backup_script <source> <existing-destination>` | Verified, versioned file archive; retention inventory only. |
+| `scripts/backup/backup_rotation.sh` | Versioned daily/weekly archives; requires SRC_DIR, BACKUP_DIR and EXPECTED_BACKUP_SOURCE. |
+| `scripts/Nginx_create.sh <dns-name> <template> <owner>` | Configuration preview. `--apply` installs and validates; `--reload` additionally reloads Nginx. |
+| `scripts/appache2_confg.sh --plan` | Apache installation plan. `--install` is explicit and may start Apache; never changes UFW. |
+| `scripts/audit/LinuxAudit.sh` | Interactive audit. Expensive filesystem scans are opt-in and bounded. |
+| `scripts/audit/FastCheck.sh <host> --scan` | Explicitly authorized TLS/connectivity checks; intrusive NSE/DoS menu removed. |
+| `scripts/audit/ScanPort.sh <IPv4> --scan` | Explicitly authorized checks of the 24 listed TCP ports. |
 
----
+The previously documented `system_resource_check` and `maintenance/log_cleanup` scripts are not supplied. Remove references to those nonexistent paths from deployment plans.
 
-## 🔔 Core
+## Alerts, state, and privileges
 
-| Script | Description | Risk Level |
-|---|---|---|
-| `scripts/core/alert_engine.sh` | Central alerting module — Slack, MS Teams, Email. Sourced by all other scripts. Also provides lock files and log rotation. | Read-only |
+`scripts/core/alert_engine.sh` supplies locking, log archival, and timestamped **local stderr alerts only**. It does not send Slack, Teams or email. Integrate stdout/stderr and exit status with your approved monitoring system; external delivery is not configured by this repository. The CPU monitor also writes `/var/log/admin-scripts`; provision that protected log directory before deployment. Log archives are retained; configure a separate reviewed retention policy.
 
-**Configure this first** before running any other script. Set your Slack webhook, Teams webhook, or email inside this file.
+Locks use `${XDG_STATE_HOME:-$HOME/.local/state}/admin-scripts`, or `ADMIN_SCRIPTS_STATE_DIR`. The state directory must be owned by the executing account, mode 700, with trusted ancestors. Backup directories and configuration parents must be protected against concurrent untrusted writers. Do not run from or deploy into user-writable directories as root.
 
----
+Monitoring needs read access to the selected objects. Backup needs read access to the source and write access to the destination. Nginx `--apply` and Apache `--install` require root and an approved change window. Scan commands contact their target; target-owner approval is required.
 
-## 🔍 Audit
+## Backup configuration and migration
 
-| Script | Description | Risk Level |
-|---|---|---|
-| `scripts/audit/LinuxAudit.sh` | Collects Linux system audit information — users, services, packages, network details, and configuration data. | Read-only / information gathering |
+1. Provision an existing, protected destination and verify the intended mounted device. Read-only check: `findmnt -n -o SOURCE -T <BackupDirectory>`.
+2. Pin the reviewed value in `EXPECTED_BACKUP_SOURCE`; do not dynamically accept whichever device is mounted at runtime.
+3. Set the source/destination explicitly. Archives include a source-path job identifier and unique timestamp/PID; old daily files are never accepted merely because they exist.
+4. Creation writes to `.partial.*`, checks gzip/tar integrity, then publishes without overwriting an existing archive and writes a SHA256 sidecar. Failures retain clearly marked partial artifacts and return nonzero.
+5. Retention prints job-specific, nonrecursive candidates; it never deletes previous backups. Review retention and capacity separately. Existing legacy archives are retained.
+6. Test restoration into an isolated directory and compare representative files, metadata, ACLs and application consistency. These are file archives, not consistent live-database backups; this implementation does not promise ACL/xattr preservation. Use an application-aware backup when required.
 
----
+Weekly filenames include the ISO week-year. Publication requires same-filesystem hard-link support. Interrupted runs after publication but before the sidecar completes must be investigated; do not infer completion from filename alone. No automatic cleanup of failed artifacts is performed.
 
-## 📊 Monitoring
+## Configuration changes
 
-| Script | Description | Risk Level |
-|---|---|---|
-| `scripts/monitoring/server-stats.sh` | Displays server statistics — CPU, memory, disk usage, uptime, and running processes. | Read-only |
-| `scripts/monitoring/cpu_memory_monitor.sh` | Monitors CPU and memory usage. Sends WARNING/CRITICAL alerts when thresholds are exceeded. Uses `vmstat` and `/proc/meminfo` for accuracy. | Read-only |
-| `scripts/monitoring/disk_alert.sh` | Monitors all disk mountpoints. Two alert levels: WARNING at 75%, CRITICAL at 90%. Skips tmpfs/devtmpfs. | Read-only |
-| `scripts/monitoring/service_uptime_checker.sh` | Checks critical services (nginx, docker, mysql). Auto-restarts if down, retries N times, escalates to CRITICAL alert with journal logs if restart fails. | Read/Write (restarts services) |
-| `scripts/monitoring/system_resource_check.sh` | Full hourly system snapshot — CPU, RAM, swap, disk, top processes, network connections, last logins. Saves report to log file. | Read-only |
+Nginx defaults to stdout preview. Templates are operator-supplied and must be reviewed, including certificate paths and any includes. Existing web roots/sites are refused. Applying checks the baseline first, creates only the new targets, tests the complete configuration, and rolls back only those new targets on failure. Ownership changes are limited to the newly created directory. If `--reload` fails, the previous file configuration is restored and a rollback reload is attempted; a failure is reported for operator intervention. A successful `--apply` without `--reload` stages the site for the next reload.
 
----
+Apache installation and firewall activation are separate changes. Before any manual firewall activation, record existing policy, the actual management port/source, console access, rollback commands, and an independent management-session validation. This script does not activate the firewall.
 
-## 💾 Backup
+For filesystem audit scans, set `ENABLE_FILESYSTEM_SCAN=1` and an explicit absolute `AUDIT_SCAN_ROOT` only after approving metadata I/O. Results can be incomplete on permission errors or timeout and must be reviewed accordingly.
 
-| Script | Description | Risk Level |
-|---|---|---|
-| `scripts/backup/backup_rotation.sh` | Daily + weekly backup with rotation. Pre-flight checks for source directory and free disk space. Alerts on failure. | Read/Write |
-| `scripts/backup/backup_script.sh` | Compressed backup with archive integrity verification (`tar -tzf`). Cleans backups older than N days. | Read/Write |
+## Validation
 
----
+`python3 -m unittest discover -s tests -v` performs Bash syntax validation, local backup creation/restore fixtures, and mocked systemctl/df/configuration-preview checks. It makes no production calls. GitHub Actions runs the same tests. Nginx reload/rollback, full disks, application restore, production mounts and notification delivery still require environment-specific lab validation.
 
-## 🧹 Maintenance
-
-| Script | Description | Risk Level |
-|---|---|---|
-| `scripts/maintenance/log_cleanup.sh` | Deletes log files older than N days. Optional `--archive` flag compresses logs before deletion. Protects `audit.log` and `secure.log`. | Read/Write (deletes files) |
-
----
-
-## ⚙️ Setup
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/blow-tech/linux-admin-scripts.git
-cd linux-admin-scripts
-```
-
-### 2. Deploy to server
-
-```bash
-sudo mkdir -p /opt/admin-scripts
-sudo cp -r scripts/* /opt/admin-scripts/
-sudo chmod +x /opt/admin-scripts/**/*.sh
-sudo mkdir -p /var/log/admin-scripts
-```
-
-### 3. Configure alerts
-
-Edit `/opt/admin-scripts/core/alert_engine.sh`:
-
-```bash
-SLACK_ENABLED=true
-SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
-
-TEAMS_ENABLED=true
-TEAMS_WEBHOOK_URL="https://outlook.office.com/webhook/YOUR-WEBHOOK-URL"
-
-SMTP_CONFIGURED=true
-ALERT_EMAIL="admin@yourcompany.com"
-```
-
-### 4. Make scripts executable
-
-```bash
-chmod +x scripts/monitoring/cpu_memory_monitor.sh
-chmod +x scripts/monitoring/disk_alert.sh
-chmod +x scripts/monitoring/service_uptime_checker.sh
-chmod +x scripts/monitoring/system_resource_check.sh
-chmod +x scripts/backup/backup_rotation.sh
-chmod +x scripts/backup/backup_script.sh
-chmod +x scripts/maintenance/log_cleanup.sh
-chmod +x scripts/core/alert_engine.sh
-```
-
-### 5. Run a script
-
-```bash
-./scripts/monitoring/cpu_memory_monitor.sh
-./scripts/monitoring/disk_alert.sh
-./scripts/audit/LinuxAudit.sh
-./scripts/backup/backup_rotation.sh
-./scripts/maintenance/log_cleanup.sh /var/log 14 --archive
-```
-
----
-
-## ⏰ Recommended Crontab
-
-```bash
-sudo crontab -e
-```
-
-```cron
-# CPU & Memory — every 5 minutes
-*/5 * * * * /opt/admin-scripts/monitoring/cpu_memory_monitor.sh
-
-# Disk Alert — every 30 minutes
-*/30 * * * * /opt/admin-scripts/monitoring/disk_alert.sh
-
-# Service Health — every 5 minutes
-*/5 * * * * /opt/admin-scripts/monitoring/service_uptime_checker.sh
-
-# System Resource Snapshot — every hour
-0 * * * * /opt/admin-scripts/monitoring/system_resource_check.sh
-
-# Daily Backup — 2AM every day
-0 2 * * * /opt/admin-scripts/backup/backup_rotation.sh
-
-# Log Cleanup — 3AM every Sunday
-0 3 * * 0 /opt/admin-scripts/maintenance/log_cleanup.sh /var/log 14 --archive
-```
-
----
-
-## 📋 Log Files
-
-All logs are written to `/var/log/admin-scripts/`:
-
-| File | Contents |
-|---|---|
-| `alerts.log` | All alerts from all scripts |
-| `cpu_memory_monitor.log` | CPU/memory check history |
-| `disk_alert.log` | Disk usage check history |
-| `service_uptime_checker.log` | Service status & restart history |
-| `system_resource_check.log` | Hourly resource snapshots |
-| `backup_rotation.log` | Daily/weekly backup history |
-| `backup_script.log` | Backup job history |
-| `log_cleanup.log` | Cleanup activity |
-
----
-
-## 🛡️ Script Safety Features
-
-Every script in this repo includes:
-
-- `set -euo pipefail` — exits immediately on any error
-- Lock files — prevents duplicate cron executions
-- Log rotation — log files are capped automatically
-- Pre-flight validation — checks directories and disk space before acting
-- Alert integration — every failure sends a real-time notification
-
----
-
-## 👤 Author
-
-**Prashanth Teja Vankala**  
-Linux System Administrator  
-GitHub: [@blow-tech](https://github.com/blow-tech)
+The September 2026 remediation corresponds to review findings H2-H5, H9, M1-M2 and the identified Linux performance items. See the pull request for exact validation evidence. Keep existing deployments pinned until their schedule and parameters have been migrated and approved.
