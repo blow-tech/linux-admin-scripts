@@ -182,8 +182,6 @@ Every script in this repo includes:
 
 ---
 
-## 👤 Author
-
-**Prashanth Teja Vankala**  
+## 👤 Author 
 Linux System Administrator  
 GitHub: [@blow-tech](https://github.com/blow-tech)
