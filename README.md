@@ -42,7 +42,7 @@ linux-admin-scripts/
 
 | Script | Description | Risk Level |
 |---|---|---|
-| `scripts/monitoring/server-stats.sh` | Displays server statistics — CPU, memory, disk usage, uptime, and running processes. | Read-only |
+| `scripts/monitoring/server-stats.sh` | Displays server statistics CPU, memory, disk usage, uptime, and running processes. | Read-only |
 | `scripts/monitoring/cpu_memory_monitor.sh` | Monitors CPU and memory usage. Sends WARNING/CRITICAL alerts when thresholds are exceeded. Uses `vmstat` and `/proc/meminfo` for accuracy. | Read-only |
 | `scripts/monitoring/disk_alert.sh` | Monitors all disk mountpoints. Two alert levels: WARNING at 75%, CRITICAL at 90%. Skips tmpfs/devtmpfs. | Read-only |
 | `scripts/monitoring/service_uptime_checker.sh` | Checks critical services (nginx, docker, mysql). Auto-restarts if down, retries N times, escalates to CRITICAL alert with journal logs if restart fails. | Read/Write (restarts services) |
