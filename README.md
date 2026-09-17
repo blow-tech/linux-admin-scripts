@@ -1,6 +1,6 @@
 # 🐧 Linux Admin Scripts
 
-A production-ready collection of Bash scripts for Linux system administration — monitoring, alerting, backup, maintenance, and security auditing.
+A production-ready collection of Bash scripts for Linux system administration monitoring, alerting, backup, maintenance, and security auditing.
 
 > All scripts include centralized Slack/Teams/Email alerting, lock files, log rotation, and proper error handling.
 
@@ -24,7 +24,7 @@ linux-admin-scripts/
 
 | Script | Description | Risk Level |
 |---|---|---|
-| `scripts/core/alert_engine.sh` | Central alerting module — Slack, MS Teams, Email. Sourced by all other scripts. Also provides lock files and log rotation. | Read-only |
+| `scripts/core/alert_engine.sh` | Central alerting module Slack, MS Teams, Email. Sourced by all other scripts. Also provides lock files and log rotation. | Read-only |
 
 **Configure this first** before running any other script. Set your Slack webhook, Teams webhook, or email inside this file.
 
