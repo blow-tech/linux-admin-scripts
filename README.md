@@ -1,5 +1,7 @@
 # Linux Admin Scripts
 
+11 October reconciliation: the existing safety fixes are reconciled with current main, preserving all four scripts added since September. `backup_verify.sh`, `healthcare_check.sh`, and `log_summary.sh` now distinguish unavailable evidence from successful checks. The suite contains 28 isolated tests. See [REVIEW-2026-10-11.md](REVIEW-2026-10-11.md) for this run's scope and migration notes.
+
 9 September continuation: shared backup publication now refuses existing checksum files, symlinks and directories. Both daily and weekly paths publish checksums with no-clobber hard links; a checksum-generation failure cannot report a verified backup. Interrupted publication may still leave an archive without its final checksum, so require a valid checksum pair and investigate retained partial artifacts. This adds two isolated regression tests (12 total); application-consistent restoration remains a lab gate.
 
 Bash administration utilities. Validate each script in a disposable lab before production deployment. Syntax checks and fixture tests do not certify an environment or an application backup.
@@ -16,6 +18,10 @@ Use `bash <script-path>`; several maintained entry points intentionally have no 
 | `scripts/monitoring/service_uptime <unit> ...` | Explicit service scope, alert-only; never restarts a service. |
 | `scripts/backup/backup_script <source> <existing-destination>` | Verified, versioned file archive; retention inventory only. |
 | `scripts/backup/backup_rotation.sh` | Versioned daily/weekly archives; requires SRC_DIR, BACKUP_DIR and EXPECTED_BACKUP_SOURCE. |
+| `scripts/backup/backup_verify.sh -d <directory>` | Read-only freshness/size check, exact age in seconds; optional `--verify-archive` fails when integrity cannot be verified. |
+| `scripts/monitoring/healthcare_check.sh` | CPU, memory, swap and disk checks; failed, empty or malformed collections return UNKNOWN. |
+| `scripts/monitoring/log_summary.sh -f <log>` | Read-only log summary; numeric rotations optional; failed reads/decompression/timeouts return UNKNOWN. |
+| `scripts/audit/security-audit.sh` | Preserved current-main security audit; not remediated or runtime-validated in this run. |
 | `scripts/Nginx_create.sh <dns-name> <template> <owner>` | Configuration preview. `--apply` installs and validates; `--reload` additionally reloads Nginx. |
 | `scripts/appache2_confg.sh --plan` | Apache installation plan. `--install` is explicit and may start Apache; never changes UFW. |
 | `scripts/audit/LinuxAudit.sh` | Interactive audit. Expensive filesystem scans are opt-in and bounded. |
@@ -52,6 +58,10 @@ Apache installation and firewall activation are separate changes. Before any man
 For filesystem audit scans, set `ENABLE_FILESYSTEM_SCAN=1` and an explicit absolute `AUDIT_SCAN_ROOT` only after approving metadata I/O. Results can be incomplete on permission errors or timeout and must be reviewed accordingly.
 
 ## Validation
+
+The three October checkers use exit 3 for UNKNOWN/incomplete evidence and exit 2 for invalid usage; `--help` exits 0. Backup and health checkers return 1 for failed checks or exceeded thresholds. Integrations must alert on every nonzero exit, not just 1. Backup age is compared in seconds: a file one second older than the configured threshold fails; a future timestamp is UNKNOWN. Unsupported archive extensions cannot satisfy `--verify-archive`.
+
+Log rotation discovery now includes only `.N` and `.N.gz`. Date-named rotations must be supplied explicitly with `-f`. Log scanning has a 60-second timeout per file (plus five seconds to terminate), configurable with `--timeout`; this does not bound total disk space or total runtime across many rotations. Compressed logs are decompressed once with status checked. Health collectors use 30-second timeouts, and memory/swap share one `free` call. These scripts require Bash and GNU/Linux tools (`timeout`, NUL-aware `sort`, GNU `find`/`stat`, plus `gzip`/`tar` or `unzip` for the relevant formats).
 
 `python3 -m unittest discover -s tests -v` performs Bash syntax validation, local backup creation/restore fixtures, and mocked systemctl/df/configuration-preview checks. It makes no production calls. GitHub Actions runs the same tests. Nginx reload/rollback, full disks, application restore, production mounts and notification delivery still require environment-specific lab validation.
 
