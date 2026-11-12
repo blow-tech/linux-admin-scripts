@@ -1,0 +1,12 @@
+name: Isolated script safety
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax and local fixture regressions
+        run: python3 -m unittest discover -s tests -v
