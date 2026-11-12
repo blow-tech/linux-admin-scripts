@@ -1,5 +1,7 @@
 # Linux Admin Scripts
 
+8 November: bounded CPU/memory, server statistics and audit collectors; 30 isolated tests. See [migration notes](REMEDIATION-2026-11.md).
+
 11 October reconciliation: the existing safety fixes are reconciled with current main, preserving all four scripts added since September. `backup_verify.sh`, `healthcare_check.sh`, and `log_summary.sh` now distinguish unavailable evidence from successful checks. The suite contains 28 isolated tests. See [REVIEW-2026-10-11.md](REVIEW-2026-10-11.md) for this run's scope and migration notes.
 
 9 September continuation: shared backup publication now refuses existing checksum files, symlinks and directories. Both daily and weekly paths publish checksums with no-clobber hard links; a checksum-generation failure cannot report a verified backup. Interrupted publication may still leave an archive without its final checksum, so require a valid checksum pair and investigate retained partial artifacts. This adds two isolated regression tests (12 total); application-consistent restoration remains a lab gate.
@@ -12,8 +14,8 @@ Use `bash <script-path>`; several maintained entry points intentionally have no 
 
 | Path | Behavior and scope |
 | --- | --- |
-| `scripts/monitoring/server-stats.sh` | Local statistics snapshot; unchanged in the September remediation. |
-| `scripts/monitoring/cpu_memory_monitor` | CPU/memory observations; local log and stderr alerts. |
+| `scripts/monitoring/server-stats.sh` | Bounded local statistics snapshot; failed collectors return nonzero. |
+| `scripts/monitoring/cpu_memory_monitor` | Bounded CPU/memory observations on stdout; no implicit logfile. |
 | `scripts/monitoring/disk_alert` | One GNU df collection; warning/critical or unavailable collection returns nonzero. |
 | `scripts/monitoring/service_uptime <unit> ...` | Explicit service scope, alert-only; never restarts a service. |
 | `scripts/backup/backup_script <source> <existing-destination>` | Verified, versioned file archive; retention inventory only. |
@@ -21,10 +23,10 @@ Use `bash <script-path>`; several maintained entry points intentionally have no 
 | `scripts/backup/backup_verify.sh -d <directory>` | Read-only freshness/size check, exact age in seconds; optional `--verify-archive` fails when integrity cannot be verified. |
 | `scripts/monitoring/healthcare_check.sh` | CPU, memory, swap and disk checks; failed, empty or malformed collections return UNKNOWN. |
 | `scripts/monitoring/log_summary.sh -f <log>` | Read-only log summary; numeric rotations optional; failed reads/decompression/timeouts return UNKNOWN. |
-| `scripts/audit/security-audit.sh` | Preserved current-main security audit; not remediated or runtime-validated in this run. |
+| `scripts/audit/security-audit.sh` | Bounded checks; explicit scan roots; failed evidence returns UNKNOWN. |
 | `scripts/Nginx_create.sh <dns-name> <template> <owner>` | Configuration preview. `--apply` installs and validates; `--reload` additionally reloads Nginx. |
 | `scripts/appache2_confg.sh --plan` | Apache installation plan. `--install` is explicit and may start Apache; never changes UFW. |
-| `scripts/audit/LinuxAudit.sh` | Interactive audit. Expensive filesystem scans are opt-in and bounded. |
+| `scripts/audit/LinuxAudit.sh` | Explicit read-only categories; bounded commands, no interactive menu. |
 | `scripts/audit/FastCheck.sh <host> --scan` | Explicitly authorized TLS/connectivity checks; intrusive NSE/DoS menu removed. |
 | `scripts/audit/ScanPort.sh <IPv4> --scan` | Explicitly authorized checks of the 24 listed TCP ports. |
 
@@ -32,7 +34,7 @@ The previously documented `system_resource_check` and `maintenance/log_cleanup` 
 
 ## Alerts, state, and privileges
 
-`scripts/core/alert_engine.sh` supplies locking, log archival, and timestamped **local stderr alerts only**. It does not send Slack, Teams or email. Integrate stdout/stderr and exit status with your approved monitoring system; external delivery is not configured by this repository. The CPU monitor also writes `/var/log/admin-scripts`; provision that protected log directory before deployment. Log archives are retained; configure a separate reviewed retention policy.
+`scripts/core/alert_engine.sh` supplies locking, log archival, and timestamped **local stderr alerts only**. It does not send Slack, Teams or email. Integrate stdout/stderr and exit status with your approved monitoring system; external delivery is not configured by this repository. Log archives are retained; configure a separate reviewed retention policy.
 
 Locks use `${XDG_STATE_HOME:-$HOME/.local/state}/admin-scripts`, or `ADMIN_SCRIPTS_STATE_DIR`. The state directory must be owned by the executing account, mode 700, with trusted ancestors. Backup directories and configuration parents must be protected against concurrent untrusted writers. Do not run from or deploy into user-writable directories as root.
 
